@@ -1,9 +1,5 @@
 # frpc Android Root Module / frpc Android Root 模块
 
-**Module version / 模块版本：** 1.10
-
----
-
 ## English Introduction
 
 1. This module does **not** include the `frpc` binary. During installation or update, it downloads `frpc` from the official open-source `frp` release for Android Root environments.
@@ -39,14 +35,6 @@
 11. 点击模块管理器操作按钮时会刷新状态；启动、停止、切换模式时会即时刷新模块说明。
 12. 支持开机自启和后台守护，`frpc` 异常退出后可自动拉起。
 13. Web 界面支持中英文切换，默认语言为英文。
-
----
-
-## Default Web Address / 默认 Web 地址
-
-```sh
-http://127.0.0.1:62930
-```
 
 ---
 
