@@ -1,0 +1,137 @@
+#!/sbin/sh
+
+OUTFD="$2"
+ZIPFILE="$3"
+MODID="frpc"
+MODPATH="/data/adb/modules_update/$MODID"
+ACTIVEPATH="/data/adb/modules/$MODID"
+DATADIR="/data/adb/frpc"
+CONFIG_DATA="$DATADIR/frpc.toml"
+AUTO_UPDATE_LOG="$DATADIR/update.log"
+
+ui_print() {
+  if [ -n "$OUTFD" ] && [ -e "/proc/self/fd/$OUTFD" ]; then
+    echo "ui_print $1" > "/proc/self/fd/$OUTFD"
+    echo "ui_print" > "/proc/self/fd/$OUTFD"
+  else
+    echo "$1"
+  fi
+}
+
+abort() {
+  ui_print "$1"
+  exit 1
+}
+
+ui_print "*******************************"
+ui_print " frpc web Only for Magisk / KernelSU"
+ui_print "*******************************"
+
+[ -n "$ZIPFILE" ] || abort "未找到 ZIPFILE 参数。"
+[ -f "$ZIPFILE" ] || abort "ZIP 文件不存在：$ZIPFILE"
+
+mkdir -p /data/adb/modules_update || abort "无法创建 /data/adb/modules_update"
+rm -rf "$MODPATH"
+mkdir -p "$MODPATH" || abort "无法创建模块目录：$MODPATH"
+
+ui_print "正在解压模块..."
+unzip -o "$ZIPFILE" -x 'META-INF/*' -d "$MODPATH" >/dev/null || abort "解压失败。"
+
+# 如果已有当前 frpc，先保留到新模块；网络不可用时也不会丢二进制。
+if [ -x "$ACTIVEPATH/frpc" ] && [ ! -f "$MODPATH/frpc" ]; then
+  cp -f "$ACTIVEPATH/frpc" "$MODPATH/frpc"
+fi
+
+chmod 755 "$MODPATH/service.sh" 2>/dev/null
+chmod 755 "$MODPATH/update_frpc.sh" 2>/dev/null
+chmod 755 "$MODPATH/uninstall.sh" 2>/dev/null
+chmod 755 "$MODPATH/action.sh" 2>/dev/null
+chmod 755 "$MODPATH/webui.sh" 2>/dev/null
+[ -f "$MODPATH/frpc" ] && chmod 755 "$MODPATH/frpc"
+chmod 644 "$MODPATH/module.prop" 2>/dev/null
+chmod 644 "$MODPATH/frpc.toml" 2>/dev/null
+
+mkdir -p "$DATADIR" "$DATADIR/downloads" "$DATADIR/web_sessions"
+chmod 755 "$DATADIR" "$DATADIR/downloads" 2>/dev/null
+chmod 700 "$DATADIR/web_sessions" 2>/dev/null
+
+# web-only config lives in /data/adb/frpc/frpc.toml.
+# On first upgrade from old versions, migrate old module config to data dir.
+if [ ! -f "$CONFIG_DATA" ]; then
+  if [ -f "$ACTIVEPATH/frpc.toml" ]; then
+    cp -f "$ACTIVEPATH/frpc.toml" "$CONFIG_DATA" 2>/dev/null
+    ui_print "已迁移旧配置到：$CONFIG_DATA"
+  elif [ -f "$MODPATH/frpc.toml" ]; then
+    cp -f "$MODPATH/frpc.toml" "$CONFIG_DATA" 2>/dev/null
+    ui_print "已初始化配置：$CONFIG_DATA"
+  fi
+  chmod 644 "$CONFIG_DATA" 2>/dev/null
+else
+  ui_print "保留已有配置：$CONFIG_DATA"
+fi
+
+# Update old defaults from earlier web UI versions.
+if [ -f "$CONFIG_DATA" ] && grep -q '^user[[:space:]]*=[[:space:]]*"F50"' "$CONFIG_DATA" 2>/dev/null; then
+  sed -i 's/^user[[:space:]]*=[[:space:]]*"F50"/user = "zyh"/' "$CONFIG_DATA" 2>/dev/null
+fi
+if [ ! -f "$DATADIR/start_delay" ] || [ "$(cat "$DATADIR/start_delay" 2>/dev/null | head -n 1)" = "30" ]; then
+  echo "10" > "$DATADIR/start_delay"
+fi
+chmod 644 "$DATADIR/start_delay" 2>/dev/null
+echo "1" > "$DATADIR/.defaults_v310_done" 2>/dev/null
+chmod 644 "$DATADIR/.defaults_v310_done" 2>/dev/null
+
+if [ ! -f "$DATADIR/web_port" ] || [ "$(cat "$DATADIR/web_port" 2>/dev/null | head -n 1)" = "62919" ]; then
+  echo "62930" > "$DATADIR/web_port"
+fi
+chmod 644 "$DATADIR/web_port" 2>/dev/null
+[ -f "$DATADIR/web_bind" ] || echo "0.0.0.0" > "$DATADIR/web_bind"
+chmod 644 "$DATADIR/web_bind" 2>/dev/null
+# 默认不创建网页登录账号密码；首次进入后台免登录。
+# 如果仍是旧版自动生成的 admin/admin，则删除，改为免密码首次设置；用户手动改过的账号保留。
+if [ -f "$DATADIR/web_auth.conf" ]; then
+  AUTH_USER_OLD="$(sed -n '1p' "$DATADIR/web_auth.conf" 2>/dev/null | head -n 1)"
+  AUTH_SECRET_OLD="$(sed -n '2p' "$DATADIR/web_auth.conf" 2>/dev/null | head -n 1)"
+  if [ "$AUTH_USER_OLD" = "admin" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then
+      HASH="$(printf '%s' admin | sha256sum 2>/dev/null | awk '{print $1}')"
+    elif command -v toybox >/dev/null 2>&1; then
+      HASH="$(printf '%s' admin | toybox sha256sum 2>/dev/null | awk '{print $1}')"
+    else
+      HASH=""
+    fi
+    if [ "$AUTH_SECRET_OLD" = "P:admin" ] || { [ -n "$HASH" ] && [ "$AUTH_SECRET_OLD" = "H:$HASH" ]; }; then
+      rm -f "$DATADIR/web_auth.conf" 2>/dev/null
+    fi
+  fi
+fi
+
+# Use bundled Asia/Shanghai zoneinfo for frpc logs. TZ=CST-8 may be ignored by Go on Android and fall back to UTC.
+TZ_FILE="$MODPATH/zoneinfo/Asia/Shanghai"
+if [ -f "$TZ_FILE" ]; then
+  echo "$TZ_FILE" > "$DATADIR/timezone" 2>/dev/null
+  ui_print "Timezone: Asia/Shanghai"
+else
+  echo "Asia/Shanghai" > "$DATADIR/timezone" 2>/dev/null
+  ui_print "Timezone: Asia/Shanghai fallback"
+fi
+chmod 644 "$DATADIR/timezone" 2>/dev/null
+
+touch "$AUTO_UPDATE_LOG" 2>/dev/null
+ui_print "正在从 GitHub 自动安装/更新 frpc..."
+if sh "$MODPATH/update_frpc.sh" --auto >> "$AUTO_UPDATE_LOG" 2>&1; then
+  ui_print "frpc 自动安装/更新成功。"
+else
+  ui_print "frpc 自动安装/更新失败，模块仍已安装。可开机后进入 web 控制台更新。"
+  ui_print "详细日志：/data/adb/frpc/update.log"
+fi
+
+ui_print "安装完成。"
+ui_print "模块目录：/data/adb/modules/frpc"
+ui_print "配置入口：web 控制台"
+ui_print "web 控制台：http://127.0.0.1:62930"
+ui_print "网页登录：默认无用户名和密码"
+ui_print "首次进入后台免登录，请到账号设置自行设置"
+ui_print "配置文件：/data/adb/frpc/frpc.toml"
+ui_print "重启后生效。"
+exit 0

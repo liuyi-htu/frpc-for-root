@@ -1,0 +1,10 @@
+serverAddr = ""
+user = "zyh"
+dnsServer = "223.5.5.5"
+
+log.to = "/data/adb/frpc/frpc.log"
+log.level = "info"
+log.maxDays = 7
+
+# 请在网页控制台添加代理：
+# http://127.0.0.1:62930
