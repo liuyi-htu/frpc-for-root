@@ -137,8 +137,6 @@ valid_username() {
 }
 
 migrate_default_auth() {
-  # 默认不再内置 admin/admin。
-  # 如果检测到旧版自动生成的 admin/admin，则删除认证文件，改为首次免密码进入。
   [ -f "$AUTH_FILE" ] || return 0
   AUTH_USER_OLD="$(sed -n '1p' "$AUTH_FILE" 2>/dev/null | head -n 1)"
   AUTH_SECRET_OLD="$(sed -n '2p' "$AUTH_FILE" 2>/dev/null | head -n 1)"
@@ -160,7 +158,6 @@ migrate_default_auth() {
 
 init_auth() {
   migrate_default_auth
-  # 默认不创建账号密码；未设置时允许直接进入后台。
   return 0
 }
 
@@ -287,7 +284,6 @@ current_session_user() {
 }
 
 is_authed() {
-  # 未设置账号密码时默认免登录进入后台。
   auth_configured || return 0
   USER_NOW="$(current_session_user)" || return 1
   [ -n "$USER_NOW" ] || return 1
@@ -328,7 +324,6 @@ print_header_cookie() {
 }
 
 apply_timezone() {
-  # frpc 是 Go 程序，Android/Magisk 环境里 TZ=CST-8 可能会被 Go 当成未知时区并回落到 UTC。
   TZ_FILE="$MODDIR/zoneinfo/Asia/Shanghai"
   if [ -f "$TZ_FILE" ]; then
     TZ_VALUE="$TZ_FILE"
@@ -360,8 +355,6 @@ pid_alive() {
 }
 
 get_pid() {
-  # 快速检测：先看 PID 文件；丢失时用系统原生命令兜底。
-  # 不再用 shell 循环遍历 /proc，避免 web 页面卡顿。
   PID_NOW="$(get_pid_quick 2>/dev/null)"
   if [ -n "$PID_NOW" ]; then
     echo "$PID_NOW"
@@ -566,7 +559,6 @@ get_pid_quick() {
 }
 
 start_frpc() {
-  # 先识别已经运行的 frpc。运行中时不再做 ready_reason 检查，避免 web 误报启动失败。
   PID="$(get_pid 2>/dev/null)"
   if [ -n "$PID" ]; then
     echo "frpc 已经在运行，PID: $PID"
@@ -1690,26 +1682,203 @@ show_update() {
   cat <<HTML
 <div class="card">
   <h3>更新 frpc 二进制</h3>
-  <p class="sub">点击后会运行 update_frpc.sh，从 frp 官方开源发布地址下载 frpc。下载失败时模块不会坏，可以查看 update.log。</p>
-  <div class="btns"><a class="btn warn" href="/cgi-bin/frpc.cgi?action=run_update">开始更新</a><a class="btn secondary" href="/cgi-bin/frpc.cgi?action=logs&which=update">查看 update.log</a></div>
+  <p class="sub">点击后会运行 update_frpc.sh，从 frp 官方开源发布地址下载 frpc。下载失败时模块不会坏，可以在本页查看 update.log。</p>
+  <div class="btns">
+    <button id="runUpdateBtn" class="btn ok" type="button" onclick="startFrpcUpdate()">开始更新</button>
+    <button class="btn secondary" type="button" onclick="refreshUpdateLog()">查看 update.log</button>
+  </div>
+  <div id="updateMsg" class="msg" style="display:none;margin-top:12px"></div>
 </div>
+
+<div class="card">
+  <h3>update.log</h3>
+  <pre id="updateLogBox">Loading update.log...</pre>
+</div>
+
+<script>
+(function(){
+  var timer=null;
+
+  function box(){
+    return document.getElementById('updateLogBox');
+  }
+
+  function btn(){
+    return document.getElementById('runUpdateBtn');
+  }
+
+  function msg(){
+    return document.getElementById('updateMsg');
+  }
+
+  function setMsg(text){
+    var m=msg();
+    if(!m){return;}
+    m.style.display='block';
+    m.textContent=text;
+  }
+
+  window.refreshUpdateLog=function(){
+    var b=box();
+    if(!b){return;}
+    fetch('/cgi-bin/frpc.cgi?action=update_log_text',{cache:'no-store'})
+      .then(function(r){return r.text();})
+      .then(function(t){
+        t=(t||'').trim();
+        b.textContent=t || 'update.log is empty.';
+        b.scrollTop=b.scrollHeight;
+      })
+      .catch(function(){
+        b.textContent='Failed to load update.log.';
+      });
+  };
+
+  function refreshStatus(){
+    fetch('/cgi-bin/frpc.cgi?action=update_status_text',{cache:'no-store'})
+      .then(function(r){return r.text();})
+      .then(function(t){
+        t=(t||'').trim();
+        if(t && t !== 'running'){
+          if(timer){
+            clearInterval(timer);
+            timer=null;
+          }
+
+          var button=btn();
+          if(button){
+            button.disabled=false;
+            button.textContent='开始更新';
+          }
+
+          if(t === 'latest'){
+            setMsg('frpc 已是最新版，无需更新。');
+          } else if(t === 'updated'){
+            setMsg('frpc 更新完成。');
+          } else if(t === 'failed'){
+            setMsg('frpc 更新失败，请查看 update.log。');
+          } else {
+            setMsg('frpc 更新流程已结束。');
+          }
+
+          refreshUpdateLog();
+        }
+      })
+      .catch(function(){});
+  }
+
+  window.startFrpcUpdate=function(){
+    var button=btn();
+    if(button){
+      button.disabled=true;
+      button.textContent='更新中...';
+    }
+
+    setMsg('frpc 更新已开始，下面会自动刷新 update.log。');
+    refreshUpdateLog();
+
+    if(timer){
+      clearInterval(timer);
+    }
+
+    timer=setInterval(function(){
+      refreshUpdateLog();
+      refreshStatus();
+    },1500);
+
+    fetch('/cgi-bin/frpc.cgi?action=run_update_async',{cache:'no-store'})
+      .then(function(r){return r.text();})
+      .then(function(t){
+        t=(t||'').trim();
+        if(t){
+          setMsg(t);
+        }
+        refreshUpdateLog();
+      })
+      .catch(function(){
+        setMsg('frpc 更新启动失败。');
+        if(timer){
+          clearInterval(timer);
+          timer=null;
+        }
+        if(button){
+          button.disabled=false;
+          button.textContent='开始更新';
+        }
+      });
+  };
+
+  refreshUpdateLog();
+})();
+</script>
 HTML
   page_bottom
 }
 
-run_update() {
-  if [ ! -f "$UPDATE_SCRIPT" ]; then
-    show_status "更新失败：找不到 $UPDATE_SCRIPT"
+update_pid_running() {
+  UPDATE_PID_FILE="$DATA_DIR/update.pid"
+  [ -f "$UPDATE_PID_FILE" ] || return 1
+  PID="$(cat "$UPDATE_PID_FILE" 2>/dev/null | head -n 1)"
+  [ -n "$PID" ] || return 1
+  [ -d "/proc/$PID" ] || return 1
+  return 0
+}
+
+text_header() {
+  echo "Content-Type: text/plain; charset=UTF-8"
+  echo "Cache-Control: no-store"
+  echo ""
+}
+
+update_log_text() {
+  text_header
+  if [ -f "$UPDATE_LOG" ]; then
+    tail -n 220 "$UPDATE_LOG" 2>/dev/null
+  fi
+}
+
+update_status_text() {
+  text_header
+  STATUS="$(cat "$DATA_DIR/update.status" 2>/dev/null | head -n 1)"
+
+  if update_pid_running; then
+    echo "running"
     return
   fi
-  sh "$UPDATE_SCRIPT" --auto >> "$UPDATE_LOG" 2>&1
-  RET="$?"
-  if [ "$RET" = "0" ]; then
-    MSG="frpc 更新完成。"
+
+  if [ "$STATUS" = "running" ]; then
+    echo "idle"
+  elif [ -n "$STATUS" ]; then
+    echo "$STATUS"
   else
-    MSG="frpc 更新失败，请查看 update.log。"
+    echo "idle"
   fi
-  show_status "$MSG"
+}
+
+run_update_async() {
+  text_header
+
+  if [ ! -f "$UPDATE_SCRIPT" ]; then
+    echo "更新失败：找不到 $UPDATE_SCRIPT"
+    return
+  fi
+
+  if update_pid_running; then
+    echo "frpc 更新正在运行，请等待完成。"
+    return
+  fi
+
+  : > "$UPDATE_LOG" 2>/dev/null
+  echo "running" > "$DATA_DIR/update.status" 2>/dev/null
+
+  nohup sh "$UPDATE_SCRIPT" --auto >/dev/null 2>&1 &
+  PID="$!"
+  echo "$PID" > "$DATA_DIR/update.pid" 2>/dev/null
+
+  echo "frpc 更新已开始。"
+}
+
+run_update() {
+  run_update_async
 }
 
 show_account() {
@@ -1854,7 +2023,6 @@ show_about() {
   <ul class="info-list">
     <li>轻量 web 控制台，支持启动、停止、日志、配置和代理管理。</li>
     <li>支持最小内存运行，稳定后可关闭 web 常驻，减少后台占用。</li>
-    <li>配置保存在 /data/adb/frpc/frpc.toml，升级模块不会覆盖。</li>
   </ul>
 </div>
 <div class="card">
@@ -1899,6 +2067,9 @@ fi
 
 case "$ACTION" in
   quick_status) quick_status; exit 0 ;;
+  update_log_text) update_log_text; exit 0 ;;
+  update_status_text) update_status_text; exit 0 ;;
+  run_update_async) run_update_async; exit 0 ;;
   running_proxies) running_proxies; exit 0 ;;
   start)
     rm -f "$LOW_MEM_FILE" 2>/dev/null
