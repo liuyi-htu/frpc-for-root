@@ -1,5 +1,6 @@
 # frpc Android Root Module / frpc Android Root 模块
-![Uploading 屏幕截图 2026-07-05 134737.png…]()
+
+<img width="2538" height="1334" alt="image" src="https://github.com/user-attachments/assets/a672cf37-3ede-426f-9b40-297664b4dc46" />
 
 ## English Introduction
 
