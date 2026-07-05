@@ -1,8 +1,8 @@
-#frpc Android Root Module / frpc Android Root 模块
+# frpc Android Root Module / frpc Android Root 模块
 
 Module version / 模块版本：1.10
 
-##English Introduction
+## English Introduction
 
 1. The module does not include the frpc binary. During installation or update, it downloads frpc from the official open-source frp release for Android Root environments.
 2. Supports Magisk, KernelSU, APatch, and similar Root module environments.
@@ -18,7 +18,7 @@ Module version / 模块版本：1.10
 12. Supports boot auto-start and background guard. If frpc exits unexpectedly, it can be restarted automatically.
 13. The web interface supports English and Chinese switching, with English as the default language.
 
-##中文说明
+## 中文说明
 
 1. 模块不内置 frpc 二进制文件；安装/更新时会从 frp 官方开源发布地址下载 frpc，用于在 Android Root 环境中运行。
 2. 支持 Magisk、KernelSU、APatch 等 Root 模块环境。
@@ -46,7 +46,7 @@ Data Directory / 数据目录
 
 /data/adb/frpc
 
-##Main Files / 主要文件说明
+## Main Files / 主要文件说明
 
 - frpc: downloaded frpc binary after installation or update; not included in the module package
   frpc：安装或更新后下载得到的 frpc 二进制文件，模块包内不自带
