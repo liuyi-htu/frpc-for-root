@@ -1,0 +1,102 @@
+name: Manual Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_name:
+        description: 'Output zip name without .zip; leave empty to use frpc-v<version>-<run_number>'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package module zip
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare package metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f module.prop ]; then
+            echo 'module.prop not found' >&2
+            exit 1
+          fi
+
+          VERSION="$(grep -E '^version=' module.prop | head -n 1 | cut -d= -f2- | tr -d '\r' | xargs)"
+          VERSION_CODE="$(grep -E '^versionCode=' module.prop | head -n 1 | cut -d= -f2- | tr -d '\r' | xargs)"
+          [ -n "$VERSION" ] || VERSION="unknown"
+          [ -n "$VERSION_CODE" ] || VERSION_CODE="0"
+
+          CUSTOM_NAME="${{ github.event.inputs.package_name }}"
+          if [ -n "$CUSTOM_NAME" ]; then
+            ZIP_NAME="${CUSTOM_NAME%.zip}.zip"
+          else
+            ZIP_NAME="frpc-v${VERSION}-${GITHUB_RUN_NUMBER}.zip"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Build module zip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y zip rsync
+
+          STAGING_DIR="build/frpc"
+          DIST_DIR="dist"
+
+          rm -rf build "$DIST_DIR"
+          mkdir -p "$STAGING_DIR" "$DIST_DIR"
+
+          rsync -a ./ "$STAGING_DIR"/ \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='build' \
+            --exclude='dist' \
+            --exclude='*.zip'
+
+          cd "$STAGING_DIR"
+
+          # Keep module scripts executable after packaging.
+          for f in customize.sh service.sh action.sh uninstall.sh webui.sh update_frpc.sh; do
+            [ -f "$f" ] && chmod 0755 "$f"
+          done
+
+          [ -f module.prop ] && chmod 0644 module.prop
+          [ -f frpc.toml ] && chmod 0644 frpc.toml
+
+          zip -r9 "../../$DIST_DIR/${{ steps.meta.outputs.zip_name }}" .
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.meta.outputs.zip_name }}
+          path: dist/${{ steps.meta.outputs.zip_name }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo '## Manual package complete'
+            echo ''
+            echo '- Module version: `${{ steps.meta.outputs.version }}`'
+            echo '- Version code: `${{ steps.meta.outputs.version_code }}`'
+            echo '- Artifact: `${{ steps.meta.outputs.zip_name }}`'
+            echo ''
+            echo 'Download it from this workflow run artifacts.'
+          } >> "$GITHUB_STEP_SUMMARY"
