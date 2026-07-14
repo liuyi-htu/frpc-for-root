@@ -1,0 +1,7 @@
+id=frpc
+name=frpc
+version=1.2
+versionCode=21
+author=community
+minMagisk=20000
+description=web mode: resident; frpc: not running; web URL: http://127.0.0.1:62930\nweb模式：web常驻；frpc：未运行；web地址：http://127.0.0.1:62930

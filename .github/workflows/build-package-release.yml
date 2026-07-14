@@ -1,0 +1,106 @@
+name: Build Package and Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: Package and upload release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare package metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -f module.prop ]; then
+            echo "module.prop not found" >&2
+            exit 1
+          fi
+
+          VERSION="$(grep -E '^version=' module.prop | head -n 1 | cut -d= -f2- | tr -d '\r' | xargs)"
+          VERSION_CODE="$(grep -E '^versionCode=' module.prop | head -n 1 | cut -d= -f2- | tr -d '\r' | xargs)"
+
+          [ -n "$VERSION" ] || VERSION="unknown"
+          [ -n "$VERSION_CODE" ] || VERSION_CODE="0"
+
+          TAG_NAME="v${VERSION}"
+          RELEASE_NAME="frpc for root-${VERSION}"
+          ZIP_NAME="frpc for root-${VERSION}.zip"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "release_name=$RELEASE_NAME" >> "$GITHUB_OUTPUT"
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Build module zip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y zip rsync
+
+          STAGING_DIR="build/frpc"
+          DIST_DIR="dist"
+
+          rm -rf build "$DIST_DIR"
+          mkdir -p "$STAGING_DIR" "$DIST_DIR"
+
+          rsync -a ./ "$STAGING_DIR"/ \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='build' \
+            --exclude='dist' \
+            --exclude='*.zip'
+
+          cd "$STAGING_DIR"
+
+          for f in customize.sh service.sh action.sh uninstall.sh webui.sh update_frpc.sh; do
+            [ -f "$f" ] && chmod 0755 "$f"
+          done
+
+          [ -f module.prop ] && chmod 0644 module.prop
+          [ -f frpc.toml ] && chmod 0644 frpc.toml
+
+          zip -r9 "../../$DIST_DIR/${{ steps.meta.outputs.zip_name }}" .
+
+      - name: Create or update GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          TAG_NAME="${{ steps.meta.outputs.tag_name }}"
+          RELEASE_NAME="${{ steps.meta.outputs.release_name }}"
+          ZIP_PATH="dist/${{ steps.meta.outputs.zip_name }}"
+
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release upload "$TAG_NAME" "$ZIP_PATH" --clobber
+          else
+            gh release create "$TAG_NAME" "$ZIP_PATH" \
+              --title "$RELEASE_NAME" \
+              --notes "frpc for root ${{ steps.meta.outputs.version }}"
+          fi
+
+      - name: Summary
+        shell: bash
+        run: |
+          {
+            echo "## Package complete"
+            echo ""
+            echo "- Version: \`${{ steps.meta.outputs.version }}\`"
+            echo "- Version code: \`${{ steps.meta.outputs.version_code }}\`"
+            echo "- Release tag: \`${{ steps.meta.outputs.tag_name }}\`"
+            echo "- Package: \`${{ steps.meta.outputs.zip_name }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
